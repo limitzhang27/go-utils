@@ -1,5 +1,6 @@
 package mySync
 
+// channel 实现sync.Once
 type Once chan struct{}
 
 func NewOnce() Once {
@@ -24,3 +25,30 @@ func (o Once) Do(f func()) {
 	// 以及未来会调用Do方法的goroutine
 	close(o)
 }
+
+
+// channel 实现信号量
+type Semaphore chan struct{}
+
+func NewSemaphore(size int) Semaphore {
+	return make(Semaphore, size)
+}
+
+func (s Semaphore) Lock() {
+	// 只有在s还有空间的时候才能发送成功
+	s <- struct {}{}
+}
+
+func (s Semaphore) Unlock() {
+	// 为其他信号腾出空间
+	<- s
+}
+
+
+// 实现互斥锁
+type Mutex Semaphore
+
+func NewMutex() Mutex {
+	return Mutex(NewSemaphore(1))
+}
+
