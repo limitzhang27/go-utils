@@ -1,4 +1,4 @@
-package main
+package readFile
 
 import (
 	"bufio"
@@ -6,10 +6,6 @@ import (
 	"io/ioutil"
 	"os"
 )
-
-func main() {
-
-}
 
 func read1(filename string) int {
 	fp, err := os.Open(filename)
