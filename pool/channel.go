@@ -10,7 +10,7 @@ import (
 
 var (
 	ErrMaxActiveConnReached = errors.New("MaxActiveConnReached")
-	ErrConnectionIsNil = errors.New("connection is nil. rejecting")
+	ErrConnectionIsNil      = errors.New("connection is nil. rejecting")
 )
 
 // Config 连接池相关配置
@@ -34,7 +34,7 @@ type Config struct {
 // 封装连接实例
 type idleConn struct {
 	conn interface{}
-	t time.Time
+	t    time.Time
 }
 
 // 等到队列中的实例
@@ -45,25 +45,25 @@ type connReq struct {
 // channelPool
 type channelPool struct {
 	// 互斥锁
-	mu 				sync.RWMutex
+	mu sync.RWMutex
 	// 连接实例
-	conns 			chan *idleConn
+	conns chan *idleConn
 	// 创建连接方法
-	factory 		func() (interface{}, error)
+	factory func() (interface{}, error)
 	// 关闭连接方法
-	close 			func(interface{}) error
+	close func(interface{}) error
 	// 测试连接方法
-	ping 			func(interface{}) error
+	ping func(interface{}) error
 	// 连接失效时长
-	idleTimeout 	time.Duration
+	idleTimeout time.Duration
 	// 等待超时时长
-	waitTimeout 	time.Duration
+	waitTimeout time.Duration
 	// 最大连接数量
-	maxActive 		int
+	maxActive int
 	// 已打开连接的数量
-	openingConns	int
+	openingConns int
 	// 等待拿到实例队列
-	connReqs 		[]chan connReq
+	connReqs []chan connReq
 }
 
 // 初始化连接池
@@ -83,16 +83,16 @@ func NewChannelPool(poolConfig *Config) (Pool, error) {
 	}
 
 	c := &channelPool{
-		conns: 			make(chan *idleConn, poolConfig.MaxIdle),
-		factory: 		poolConfig.Factory,
-		close:			poolConfig.Close,
-		idleTimeout: 	poolConfig.IdleTimeout,
-		maxActive: 		poolConfig.MaxIdle,
-		openingConns: 	poolConfig.InitialCap,
+		conns:        make(chan *idleConn, poolConfig.MaxIdle),
+		factory:      poolConfig.Factory,
+		close:        poolConfig.Close,
+		idleTimeout:  poolConfig.IdleTimeout,
+		maxActive:    poolConfig.MaxIdle,
+		openingConns: poolConfig.InitialCap,
 	}
 
-	if  poolConfig.Ping != nil {
-		c.ping	= poolConfig.Ping
+	if poolConfig.Ping != nil {
+		c.ping = poolConfig.Ping
 	}
 
 	for i := 0; i < poolConfig.InitialCap; i++ {
@@ -107,7 +107,8 @@ func NewChannelPool(poolConfig *Config) (Pool, error) {
 }
 
 // getConns 获取所有连接
-func (c *channelPool) getConns() chan *idleConn  {
+func (c *channelPool) getConns() chan *idleConn {
+	// 获取所有连接需要加锁，防止到一半的时候channel被其他channel修改
 	c.mu.Lock()
 	conns := c.conns
 	c.mu.Unlock()
@@ -123,14 +124,15 @@ func (c *channelPool) Get() (interface{}, error) {
 	for {
 		select {
 		case wrapConn := <-conns:
+			// 可能是已经存放空闲连接的channel已经关闭了
 			if wrapConn == nil {
 				return nil, ErrClosed
 			}
 			// 判断是否超时， 超时则丢弃
-			// (重新赋值是为了防止这个变量突然变成0，导致下面的时间判断出错)
-			if  timeout := c.idleTimeout; timeout > 0 {
+			// (重新赋值是为了防止这个变量突然变成小于0的数字，导致下面的时间判断出错)
+			if timeout := c.idleTimeout; timeout > 0 {
 				if wrapConn.t.Add(timeout).Before(time.Now()) {
-					// 丢弃并关闭该连接
+					// 已经超时了丢弃并关闭该连接
 					_ = c.Close(wrapConn)
 					continue
 				}
@@ -145,10 +147,12 @@ func (c *channelPool) Get() (interface{}, error) {
 			log.Printf("openConn %v %v", c.openingConns, c.maxActive)
 			// 当正在连接的数量大于最大连接数, 加入等待队列中
 			if c.openingConns >= c.maxActive {
+				// 将一个通道传入等待切片中，当前协程监听这个通道，直到得到连接或者超时等
+				// 在有空闲连接的时候会从切片中去找到这个通道，然后往通道加入当前的空闲连接
 				req := make(chan connReq, 1)
 				c.connReqs = append(c.connReqs, req)
 				c.mu.Unlock()
-				ret, ok := <- req
+				ret, ok := <-req
 				if !ok { // 等待队列异常
 					return nil, ErrMaxActiveConnReached
 				}
@@ -161,6 +165,7 @@ func (c *channelPool) Get() (interface{}, error) {
 				}
 				return ret.idleConn.conn, nil
 			}
+			// 没有达到最大连接数，新建一个连接
 			if c.factory == nil {
 				c.mu.Unlock()
 				return nil, ErrClosed
@@ -176,9 +181,10 @@ func (c *channelPool) Get() (interface{}, error) {
 	}
 }
 
+// 连接执行结束，将其归还
 func (c *channelPool) Put(conn interface{}) error {
 	if conn == nil {
-		 return ErrConnectionIsNil
+		return ErrConnectionIsNil
 	}
 
 	c.mu.Lock()
@@ -189,12 +195,13 @@ func (c *channelPool) Put(conn interface{}) error {
 	}
 
 	// 等待队列不为空
+	// 等待队列数组中拿出第一个(channel)，将连接写入这个通道中。
 	if l := len(c.connReqs); l > 0 {
 		req := c.connReqs[0]
 		copy(c.connReqs, c.connReqs[1:])
 		c.connReqs = c.connReqs[:l-1]
 		req <- connReq{
-			idleConn: &idleConn{conn: conn, t:    time.Now()},
+			idleConn: &idleConn{conn: conn, t: time.Now()},
 		}
 		c.mu.Unlock()
 		return nil
@@ -204,14 +211,13 @@ func (c *channelPool) Put(conn interface{}) error {
 		case c.conns <- &idleConn{conn: conn, t: time.Now()}:
 			c.mu.Unlock()
 			return nil
-		default:	// 空闲连接池满了的话，直接关闭
+		default: // 空闲连接池满了的话，直接关闭
 			c.mu.Unlock()
 			return c.close(conn)
 
 		}
 	}
 }
-
 
 // Close 关闭链接
 func (c *channelPool) Close(conn interface{}) error {
@@ -238,7 +244,7 @@ func (c *channelPool) Ping(conn interface{}) error {
 	return c.ping(conn)
 }
 
-func (c *channelPool) Release()  {
+func (c *channelPool) Release() {
 	c.mu.Lock()
 	conns := c.conns
 	c.conns = nil
