@@ -1,4 +1,4 @@
-package mySync
+package sync
 
 // channel 实现sync.Once
 type Once chan struct{}
