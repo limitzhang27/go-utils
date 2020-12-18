@@ -69,9 +69,11 @@ func ListenAndServer(cfg *Config, handler Handler) {
 		conn, err := listener.Accept()
 		if err != nil {
 			if closing.Get() {
-				// 收到关闭信号后进入此流程，此时listener 已被监听系统信号的goroutine关闭
+				// 收到关闭信号后进入此流程，此时listener 已被监听系统信号的goroutine关闭(在上面)
 				log.Println("waiting disconnect...")
-				// 主携程应等待引用层服务器完成工作并关闭链接
+				// 主协程应等待应用层服务器完成工作再关闭链接
+				// 如果等待，主协程会因为 listener 的关闭而直接关闭了，
+				// 当 listener 关闭之后，会去遍历所有连接并关闭它们
 				waitDone.Wait()
 				return
 			}
@@ -83,6 +85,7 @@ func ListenAndServer(cfg *Config, handler Handler) {
 			defer func() {
 				waitDone.Done()
 			}()
+			// 使用waitGroup来标识当前还有连接正在执行
 			waitDone.Add(1)
 			handler.Handle(ctx, conn)
 		}()
@@ -146,12 +149,14 @@ func (h *EchoHandle) Handle(ctx context.Context, conn net.Conn) {
 		client.Waiting.Add(1)
 
 		// 模拟关闭时未完成的发送
-		time.Sleep(10 * time.Second)
+		//time.Sleep(10 * time.Second)
+
 		_, _ = client.Conn.Write([]byte(msg))
 		client.Waiting.Done() // 发送结束
 	}
 }
 
+// 遍历所有连接并执行关闭，如果当前连接正在发送消息，会等待发送结束或者超时
 func (h *EchoHandle) Close() error {
 	log.Println("handler shutting down...")
 	h.closing.Set(true)
