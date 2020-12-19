@@ -96,8 +96,9 @@ func ListenAndServer(cfg *Config, handler Handler) {
 type Client struct {
 	// tcp 连接
 	Conn net.Conn
-	// 当服务端开始发送数据时进入waiting，阻止其他goroutine关闭连接
-	// 带有超时的wait group
+
+	// 带有 timeout 功能的WaitGroup， 用于优雅关闭
+	// 当响应被完成发送前保持 waiting 状态，阻止连接被关闭
 	Waiting sync2.Wait
 }
 
