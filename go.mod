@@ -1,3 +1,3 @@
-module go-utils
+module github.com/limitzhang87/go-utils
 
-go 1.14
+go 1.17
