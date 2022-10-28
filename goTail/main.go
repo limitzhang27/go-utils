@@ -17,9 +17,15 @@ var (
 	levelMap map[string]struct{}
 )
 
+const (
+	LevelError = "error"
+	LevelWarn  = "warn"
+	LevelInfo  = "info"
+)
+
 func init() {
-	flag.StringVar(&filePath, "filePath", "default", "log file path")
-	flag.StringVar(&level, "level", "", "filter log level")
+	flag.StringVar(&filePath, "f", "default", "to tail file path")
+	flag.StringVar(&level, "l", "", "filter level")
 }
 
 func main() {
@@ -75,19 +81,38 @@ func goTail(filePath string) {
 			continue
 		}
 
+		var str bytes.Buffer
+		_ = json.Indent(&str, []byte(line.Text), "", "    ")
+
+		filterStruct := FilterStruct{}
+		err = json.Unmarshal([]byte(line.Text), &filterStruct)
+		if err != nil {
+			fmt.Println("--------")
+			fmt.Println(str.String())
+			continue
+		}
+
 		if len(levelMap) > 0 {
-			filterStruct := FilterStruct{}
-			err = json.Unmarshal([]byte(line.Text), &filterStruct)
-			if err == nil {
-				if _, ok := levelMap[filterStruct.Level]; !ok {
-					continue
-				}
+			// 过滤日志级别
+			if _, ok := levelMap[filterStruct.Level]; !ok {
+				continue
 			}
 		}
 
-		var str bytes.Buffer
-		_ = json.Indent(&str, []byte(line.Text), "", "    ")
-		fmt.Printf("\033[1;37;41m%s\033[0m", "LINE: ")
-		fmt.Println(str.String())
+		colorTag := getColorTag(filterStruct.Level)
+		fmt.Println("--------")
+		fmt.Printf(colorTag, str.String())
+		fmt.Println("")
 	}
+}
+
+func getColorTag(level string) string {
+	color := "%s"
+	switch level {
+	case LevelError:
+		color = "\033[1;31m%s\033[0m"
+	case LevelWarn:
+		color = "\033[1;33m%s\033[0m"
+	}
+	return color
 }
