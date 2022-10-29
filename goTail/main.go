@@ -122,7 +122,6 @@ func goTail(filePath string) {
 			}
 		}
 		fmt.Printf(getColorTag(level), mapToFormatJsonStr(logMap))
-		fmt.Println("")
 	}
 }
 
@@ -144,5 +143,5 @@ func getColorTag(level string) string {
 	case LevelWarn:
 		color = "\033[1;33m%s\033[0m"
 	}
-	return color
+	return color + "\n"
 }
