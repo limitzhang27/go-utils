@@ -24,17 +24,22 @@ const (
 )
 
 func init() {
-	flag.StringVar(&filePath, "f", "default", "to tail file path")
+	flag.StringVar(&filePath, "f", "", "to tail file path")
 	flag.StringVar(&level, "l", "", "filter level")
 }
 
 func main() {
 	flag.Parse()
+	fmt.Println(filePath)
+	if filePath == "" {
+		filePath = "./log/service.log.fls"
+	}
 	_, err := os.Stat(filePath)
 	if err != nil {
 		fmt.Printf("file (%s) not exit\n", filePath)
 		return
 	}
+
 	fmt.Printf("Start tail file (fileter %s): %s\n", level, filePath)
 
 	levelList := strings.Split(level, ",")
@@ -47,8 +52,9 @@ func main() {
 	goTail(filePath)
 }
 
-type FilterStruct struct {
-	Level string `json:"_level_"`
+type LogStruct struct {
+	Level      string `json:"_level_"`
+	DebugStack string `json:"debug_stack"`
 }
 
 func goTail(filePath string) {
@@ -74,6 +80,7 @@ func goTail(filePath string) {
 		ok   bool
 	)
 	for {
+		fmt.Println("--------")
 		line, ok = <-tails.Lines // 遍历chan, 读取日志内容
 		if !ok {
 			fmt.Printf("tail file close reopen, fileName %s\n", tails.Filename)
@@ -81,29 +88,52 @@ func goTail(filePath string) {
 			continue
 		}
 
-		var str bytes.Buffer
-		_ = json.Indent(&str, []byte(line.Text), "", "    ")
+		// 简易格式化日志
+		var lineByte bytes.Buffer
+		_ = json.Indent(&lineByte, []byte(line.Text), "", "    ")
+		str := lineByte.String()
 
-		filterStruct := FilterStruct{}
-		err = json.Unmarshal([]byte(line.Text), &filterStruct)
+		// 日志筛选
+		logStruct := LogStruct{}
+		err = json.Unmarshal([]byte(line.Text), &logStruct)
 		if err != nil {
-			fmt.Println("--------")
-			fmt.Println(str.String())
+			fmt.Println(str)
 			continue
 		}
 
-		if len(levelMap) > 0 {
-			// 过滤日志级别
-			if _, ok := levelMap[filterStruct.Level]; !ok {
-				continue
-			}
+		logMap := make(map[string]interface{})
+		d := json.NewDecoder(bytes.NewReader([]byte(line.Text)))
+		d.UseNumber()
+		err = d.Decode(&logMap)
+		if err != nil {
+			fmt.Println(str)
+			continue
 		}
 
-		colorTag := getColorTag(filterStruct.Level)
-		fmt.Println("--------")
-		fmt.Printf(colorTag, str.String())
+		// 日志筛选
+		level := LevelInfo
+		if l, ok := logMap["_level_"]; ok {
+			level = l.(string)
+			if len(levelMap) > 0 {
+				// 过滤日志级别
+				if _, ok := levelMap[level]; !ok {
+					continue
+				}
+			}
+		}
+		fmt.Printf(getColorTag(level), mapToFormatJsonStr(logMap))
 		fmt.Println("")
 	}
+}
+
+func mapToFormatJsonStr(m map[string]interface{}) string {
+	res := strings.Builder{}
+	res.WriteString("{\r\n")
+	for key, value := range m {
+		res.WriteString(fmt.Sprintf("    \"%s\" : %v,\r\n", key, value))
+	}
+	res.WriteString("}\r\n")
+	return res.String()
 }
 
 func getColorTag(level string) string {
